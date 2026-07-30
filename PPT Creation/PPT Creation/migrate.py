@@ -207,6 +207,7 @@ app = Flask(__name__)
 # ---- PERMANENT FIX: strip stray lone-surrogate characters from any ----
 # ---- response before Werkzeug tries to UTF-8 encode it. Prevents   ----
 # ---- "UnicodeEncodeError: surrogates not allowed" from any route.  ----
+from werkzeug.security import generate_password_hash, check_password_hash
 import werkzeug.wrappers.response as _wkr_resp_patch
 _orig_set_data = _wkr_resp_patch.Response.set_data
 def _sanitized_set_data(self, value):
@@ -308,6 +309,58 @@ class UserAccess(db.Model):
 
     role  = db.Column(db.String(20), default=ROLE_READ)
 
+    password = db.Column(db.String(200), default="")
+
+    reset_token = db.Column(db.String(100), default="")
+
+    reset_expires = db.Column(db.Float, default=0)
+
+    failed_attempts = db.Column(db.Integer, default=0)
+
+    locked = db.Column(db.Boolean, default=False)
+
+    must_change_password = db.Column(db.Boolean, default=False)
+
+
+    def set_password(self, raw_password):
+
+        self.password = generate_password_hash(raw_password)
+
+        self.failed_attempts = 0
+
+        self.locked = False
+
+
+    def check_password(self, raw_password):
+
+        stored = self.password or ""
+
+        if not stored:
+
+            return False
+
+        # Legacy accounts may still have a plaintext password on file;
+
+        # verify it directly and transparently upgrade it to a hash.
+
+        if ":" not in stored:
+
+            if stored == raw_password:
+
+                self.set_password(raw_password)
+
+                return True
+
+            return False
+
+        try:
+
+            return check_password_hash(stored, raw_password)
+
+        except ValueError:
+
+            return stored == raw_password
+
 
     @staticmethod
 
@@ -343,6 +396,27 @@ class UserAccess(db.Model):
     def is_admin(email):
 
         return UserAccess.get_role(email) == ROLE_ADMIN
+
+
+class PendingSignup(db.Model):
+
+    """Sign-up requests awaiting admin review/approval."""
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    name = db.Column(db.String(200), nullable=False)
+
+    email = db.Column(db.String(200), unique=True, nullable=False)
+
+    password_hash = db.Column(db.String(255), nullable=False)
+
+    company = db.Column(db.String(200), default="")
+
+    reason = db.Column(db.String(500), default="")
+
+    status = db.Column(db.String(20), default="pending")
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 def _migrate():
@@ -2044,6 +2118,24 @@ button:hover{
 
 }
 
+.signup-link{
+
+  text-align:center;margin-top:16px;font-size:13px;color:#94a3b8;
+
+}
+
+.signup-link a{
+
+  color:#038dbd;font-weight:700;text-decoration:none;
+
+}
+
+.signup-link a:hover{
+
+  text-decoration:underline;
+
+}
+
 </style></head>
 
 <body>
@@ -2070,9 +2162,13 @@ button:hover{
 
     <form method="post">
 
-      <label class="field-label">Work Email</label>
+      <label class="field-label">Email</label>
 
-      <input name="user_email_field" type="text" inputmode="email" placeholder="you@varitecconsulting.com" required autofocus autocomplete="new-password">
+      <input name="user_email_field" type="text" inputmode="email" placeholder="you@varitecconsulting.com" required autofocus autocomplete="username">
+
+      <label class="field-label">Password</label>
+
+      <input name="password" type="password" placeholder="Enter your password" required autocomplete="current-password">
 
 
       <button>Sign In</button>
@@ -2080,6 +2176,285 @@ button:hover{
       {% if error %}<div class="err">{{ error }}</div>{% endif %}
 
     </form>
+
+    <div class="signup-link">New here? <a href="/signup">Request access</a></div>
+
+  </div>
+
+  <div class="footer-note">VariTec Consulting &middot; Confidential</div>
+
+</div>
+
+</body></html>"""
+
+
+SIGNUP_HTML="""<!DOCTYPE html><html><head><title>Request Access &middot; VariTec Notes</title>
+
+<style>
+
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',system-ui,sans-serif;}
+
+body{
+
+  min-height:100vh;display:flex;align-items:center;justify-content:center;
+
+  background:linear-gradient(135deg,#0d152b 0%,#1e3868 50%,#0a2a5e 100%);
+
+  position:relative;overflow:hidden;padding:32px 16px;
+
+}
+
+body::before{
+
+  content:'';position:absolute;top:-120px;right:-120px;width:380px;height:380px;
+
+  border-radius:50%;background:rgba(3,141,189,.18);
+
+}
+
+body::after{
+
+  content:'';position:absolute;bottom:-150px;left:-100px;width:340px;height:340px;
+
+  border-radius:50%;background:rgba(77,178,222,.12);
+
+}
+
+.login-shell{
+
+  position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:22px;
+
+}
+
+.card{
+
+  background:white;padding:40px 38px 32px;border-radius:18px;
+
+  box-shadow:0 20px 60px rgba(0,0,0,.35);width:420px;
+
+  border:1px solid rgba(255,255,255,.08);
+
+}
+
+.card-header{
+
+  display:flex;align-items:center;gap:14px;margin-bottom:22px;
+
+}
+
+.card-icon{
+
+  width:52px;height:52px;border-radius:14px;flex-shrink:0;
+
+  background:linear-gradient(135deg,#038dbd,#0284c7);
+
+  display:flex;align-items:center;justify-content:center;
+
+  font-size:24px;
+
+  box-shadow:0 8px 20px rgba(3,141,189,.35);
+
+}
+
+.card-header-text{display:flex;flex-direction:column;justify-content:center;}
+
+.card h2{
+
+  font-size:22px;font-weight:800;color:#0d152b;line-height:1.2;
+
+}
+
+.card .tagline{
+
+  font-size:13px;color:#94a3b8;margin-top:3px;
+
+}
+
+.field-label{
+
+  font-size:12px;font-weight:700;color:#475569;text-transform:uppercase;
+
+  letter-spacing:.6px;margin-bottom:6px;display:block;
+
+}
+
+input,textarea{
+
+  width:100%;padding:13px 14px;margin-bottom:18px;
+
+  border:1.5px solid #e2e8f0;border-radius:10px;font-size:14px;
+
+  outline:none;transition:.15s;color:#1e293b;font-family:inherit;
+
+}
+
+textarea{resize:vertical;min-height:64px;}
+
+input::placeholder,textarea::placeholder{color:#cbd5e1;}
+
+input:focus,textarea:focus{
+
+  border-color:#038dbd;box-shadow:0 0 0 4px rgba(3,141,189,.10);
+
+}
+
+button{
+
+  width:100%;padding:13px;
+
+  background:linear-gradient(135deg,#0d152b,#1e3868);
+
+  color:white;border:none;border-radius:10px;font-size:14px;font-weight:700;
+
+  letter-spacing:.4px;cursor:pointer;transition:.18s;
+
+  box-shadow:0 6px 18px rgba(13,21,43,.25);
+
+}
+
+button:hover{
+
+  background:linear-gradient(135deg,#038dbd,#0284c7);
+
+  box-shadow:0 8px 22px rgba(3,141,189,.35);
+
+  transform:translateY(-1px);
+
+}
+
+.err{
+
+  color:#dc2626;margin-top:-8px;margin-bottom:14px;font-size:13px;font-weight:600;
+
+  background:#fee2e2;border:1px solid #fecaca;border-radius:8px;
+
+  padding:10px 12px;text-align:center;
+
+}
+
+.ok-box{
+
+  text-align:center;padding:8px 0 4px;
+
+}
+
+.ok-icon{
+
+  font-size:40px;margin-bottom:10px;
+
+}
+
+.ok-box h3{
+
+  font-size:18px;color:#0d152b;margin-bottom:8px;
+
+}
+
+.ok-box p{
+
+  font-size:13px;color:#64748b;line-height:1.5;
+
+}
+
+.footer-note{
+
+  font-size:12px;color:rgba(255,255,255,.45);text-align:center;
+
+  letter-spacing:.4px;
+
+}
+
+.signup-link{
+
+  text-align:center;margin-top:16px;font-size:13px;color:#94a3b8;
+
+}
+
+.signup-link a{
+
+  color:#038dbd;font-weight:700;text-decoration:none;
+
+}
+
+.signup-link a:hover{
+
+  text-decoration:underline;
+
+}
+
+</style></head>
+
+<body>
+
+<div class="login-shell">
+
+  <div class="card">
+
+    {% if submitted %}
+
+    <div class="ok-box">
+
+      <div class="ok-icon">✅</div>
+
+      <h3>Request submitted</h3>
+
+      <p>Thanks, {{ name }}. Your request has been sent to an administrator for review. You'll be able to sign in once it's approved.</p>
+
+    </div>
+
+    <div class="signup-link"><a href="/">← Back to Sign In</a></div>
+
+    {% else %}
+
+    <div class="card-header">
+
+      <div class="card-icon">📝</div>
+
+      <div class="card-header-text">
+
+        <h2>Request Access</h2>
+
+        <div class="tagline">Fill in your details to request an account</div>
+
+      </div>
+
+    </div>
+
+    <form method="post">
+
+      <label class="field-label">Full Name</label>
+
+      <input name="name" type="text" placeholder="Jane Doe" required autofocus value="{{ name or '' }}">
+
+      <label class="field-label">Email</label>
+
+      <input name="email" type="text" inputmode="email" placeholder="you@varitecconsulting.com" required value="{{ email or '' }}">
+
+      <label class="field-label">Password</label>
+
+      <input name="password" type="password" placeholder="Create a password" required autocomplete="new-password">
+
+      <label class="field-label">Confirm Password</label>
+
+      <input name="confirm_password" type="password" placeholder="Re-enter your password" required autocomplete="new-password">
+
+      <label class="field-label">Company / Team</label>
+
+      <input name="company" type="text" placeholder="e.g. VariTec Consulting" value="{{ company or '' }}">
+
+      <label class="field-label">Reason for Access</label>
+
+      <textarea name="reason" placeholder="Briefly tell us why you need access">{{ reason or '' }}</textarea>
+
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+      <button>Submit Request</button>
+
+    </form>
+
+    <div class="signup-link">Already have access? <a href="/">Sign in</a></div>
+
+    {% endif %}
 
   </div>
 
@@ -7102,6 +7477,10 @@ def serve_thankyou_graphic():
     from flask import send_file
     path = os.path.join(BASE_DIR, "Support Image", "thankyou_graphic.png")
     if not os.path.exists(path):
+        # thankyou_graphic.png isn't shipped in Support Image; fall back to
+        # the thank-you background so this route never 404s.
+        path = os.path.join(BASE_DIR, "Support Image", "thankyou_bg.png")
+    if not os.path.exists(path):
         return "Not found", 404
     with open(path, "rb") as _f:
         _header = _f.read(3)
@@ -7123,6 +7502,13 @@ def serve_thankyou_bg():
 def serve_cover_logo():
     from flask import send_file
     path = os.path.join(BASE_DIR, "Support Image", "cover_logo.png")
+    if not os.path.exists(path):
+        # cover_logo.png isn't shipped in Support Image; fall back to the
+        # full-colour logo (kept in the folder but otherwise unused) so this
+        # route never 404s.
+        path = os.path.join(BASE_DIR, "Support Image", "Varitec Logo_Full_Black-Blue.png")
+    if not os.path.exists(path):
+        path = os.path.join(BASE_DIR, "Support Image", "varitec_logo.png")
     if not os.path.exists(path):
         return "Not found", 404
     with open(path, "rb") as _f:
@@ -7170,21 +7556,148 @@ def login():
 
     error=None
 
+    MAX_FAILED_ATTEMPTS = 5
+
     if request.method=="POST":
 
         email=request.form.get("user_email_field", request.form.get("email","")).strip().lower()
 
-        if UserAccess.has_access(email):
+        password=request.form.get("password","")
 
-            session["email"]=email
+        generic_error="Access denied. Contact your administrator."
 
-            session["role"]=UserAccess.get_role(email)
+        if not password or not UserAccess.has_access(email):
 
-            return redirect("/notes")
+            error=generic_error
 
-        error="Access denied. Contact your administrator."
+        else:
+
+            ua = UserAccess.query.filter_by(email=email).first()
+
+            if ua is None:
+
+                # DEFAULT_ADMINS with no UserAccess row yet - create one on first login
+
+                ua = UserAccess(email=email, role=UserAccess.get_role(email))
+
+                ua.set_password(password)
+
+                db.session.add(ua)
+
+                db.session.commit()
+
+                session["email"]=email
+
+                session["role"]=UserAccess.get_role(email)
+
+                return redirect("/notes")
+
+            if ua.locked:
+
+                error="Account locked. Contact your administrator."
+
+            elif not ua.password:
+
+                # No password on file yet - first login sets it
+
+                ua.set_password(password)
+
+                db.session.commit()
+
+                session["email"]=email
+
+                session["role"]=UserAccess.get_role(email)
+
+                return redirect("/notes")
+
+            elif ua.check_password(password):
+
+                ua.failed_attempts = 0
+
+                db.session.commit()
+
+                session["email"]=email
+
+                session["role"]=UserAccess.get_role(email)
+
+                return redirect("/notes")
+
+            else:
+
+                ua.failed_attempts = (ua.failed_attempts or 0) + 1
+
+                if ua.failed_attempts >= MAX_FAILED_ATTEMPTS:
+
+                    ua.locked = True
+
+                db.session.commit()
+
+                error=generic_error
 
     return render_template_string(LOGIN_HTML,error=error)
+
+
+@app.route("/signup", methods=["GET","POST"])
+
+def signup():
+
+    error=None
+
+    name=email=company=reason=""
+
+    if request.method=="POST":
+
+        name = request.form.get("name","").strip()
+
+        email = request.form.get("email","").strip().lower()
+
+        password = request.form.get("password","")
+
+        confirm_password = request.form.get("confirm_password","")
+
+        company = request.form.get("company","").strip()
+
+        reason = request.form.get("reason","").strip()
+
+        if not name or not email or not password:
+
+            error="Please fill in your name, email, and password."
+
+        elif "@" not in email or "." not in email.split("@")[-1]:
+
+            error="Please enter a valid email address."
+
+        elif password != confirm_password:
+
+            error="Passwords do not match."
+
+        elif len(password) < 6:
+
+            error="Password must be at least 6 characters."
+
+        elif UserAccess.query.filter_by(email=email).first() or email in DEFAULT_ADMINS:
+
+            error="An account with this email already exists. Try signing in instead."
+
+        elif PendingSignup.query.filter_by(email=email, status="pending").first():
+
+            error="A request for this email is already pending review."
+
+        else:
+
+            req = PendingSignup(name=name, email=email, company=company, reason=reason)
+
+            req.password_hash = generate_password_hash(password)
+
+            db.session.add(req)
+
+            db.session.commit()
+
+            return render_template_string(SIGNUP_HTML, submitted=True, name=name)
+
+    return render_template_string(SIGNUP_HTML, submitted=False, error=error,
+
+        name=name, email=email, company=company, reason=reason)
 
 
 @app.route("/logout")
@@ -7236,13 +7749,19 @@ def admin_users():
 
     shown_emails = {u.email for u in users}
 
+    def _pw_form(email):
+        return (f'''<form method="post" action="/admin/users/set-password" class="inline-form pw-form" onsubmit="return this.password.value.length>=6 || (alert('Password must be at least 6 characters.'),false);">'''
+                f'''<input type="hidden" name="email" value="{email}">'''
+                f'''<input type="password" name="password" placeholder="New password" class="pw-input" minlength="6" required>'''
+                f'''<button type="submit" class="btn-update">🔑 Set Password</button></form>''')
+
     default_rows = ""
 
     for de in sorted(DEFAULT_ADMINS):
 
         if de not in shown_emails:
 
-            default_rows += f'''<div class="user-card"><div class="user-info"><div class="user-avatar admin">{de[0].upper()}</div><div><div class="user-email">{de}</div><div class="user-meta">Default Administrator</div></div></div><div class="user-actions"><span class="role-badge admin">ADMIN</span><span class="default-lock">🔒 Default</span></div></div>'''
+            default_rows += f'''<div class="user-card"><div class="user-info"><div class="user-avatar admin">{de[0].upper()}</div><div><div class="user-email">{de}</div><div class="user-meta">Default Administrator</div></div></div><div class="user-actions"><span class="role-badge admin">ADMIN</span><span class="default-lock">🔒 Default</span>{_pw_form(de)}</div></div>'''
 
     db_rows = ""
 
@@ -7254,19 +7773,39 @@ def admin_users():
 
         sel_opts = "".join(f'''<option value="{r}"{" selected" if r==u.role else ""}>{r.title()}</option>''' for r in ROLES)
 
-        actions = ('''<span class="default-lock">🔒 Default</span>''' if is_default else
+        lock_note = ''' <span class="default-lock" style="color:#dc2626;">🔒 Locked</span>''' if u.locked else ""
 
-            f'''<form method="post" action="/admin/users/{u.id}/role" class="inline-form"><select name="role" class="role-select">{sel_opts}</select><button type="submit" class="btn-update">Save</button></form><form method="post" action="/admin/users/{u.id}/delete" onsubmit="return confirm('Remove {u.email}?')" class="inline-form"><button type="submit" class="btn-remove">✕ Remove</button></form>''')
+        actions = ((f'''<span class="default-lock">🔒 Default</span>{_pw_form(u.email)}''') if is_default else
 
-        db_rows += f'''<div class="user-card"><div class="user-info"><div class="user-avatar {u.role}">{u.email[0].upper()}</div><div><div class="user-email">{u.email}</div><div class="user-meta">{role_icon} {u.role.title()} Access</div></div></div><div class="user-actions"><span class="role-badge {u.role}">{u.role.upper()}</span>{actions}</div></div>'''
+            f'''<form method="post" action="/admin/users/{u.id}/role" class="inline-form"><select name="role" class="role-select">{sel_opts}</select><button type="submit" class="btn-update">Save</button></form>{_pw_form(u.email)}<form method="post" action="/admin/users/{u.id}/delete" onsubmit="return confirm('Remove {u.email}?')" class="inline-form"><button type="submit" class="btn-remove">✕ Remove</button></form>''')
+
+        db_rows += f'''<div class="user-card"><div class="user-info"><div class="user-avatar {u.role}">{u.email[0].upper()}</div><div><div class="user-email">{u.email}</div><div class="user-meta">{role_icon} {u.role.title()} Access{lock_note}</div></div></div><div class="user-actions"><span class="role-badge {u.role}">{u.role.upper()}</span>{actions}</div></div>'''
 
     total = len(users) + len([d for d in DEFAULT_ADMINS if d not in shown_emails])
 
     managed_label = f'''<div class="section-label" style="margin-top:16px;">Managed Users</div>''' if db_rows else ""
 
+    pending = PendingSignup.query.filter_by(status="pending").order_by(PendingSignup.created_at.desc()).all()
+
+    pending_rows = ""
+
+    for p in pending:
+
+        meta_bits = []
+
+        if p.company: meta_bits.append(p.company)
+
+        if p.reason: meta_bits.append(p.reason)
+
+        meta = " &middot; ".join(meta_bits) if meta_bits else "No additional details provided"
+
+        pending_rows += f'''<div class="user-card"><div class="user-info"><div class="user-avatar read">{p.name[0].upper()}</div><div><div class="user-email">{p.name} &middot; {p.email}</div><div class="user-meta">{meta}</div></div></div><div class="user-actions"><form method="post" action="/admin/signups/{p.id}/approve" class="inline-form"><select name="role" class="role-select"><option value="read">👁 Read</option><option value="write">✏️ Write</option><option value="admin">🛡️ Admin</option></select><button type="submit" class="btn-update">✓ Approve</button></form><form method="post" action="/admin/signups/{p.id}/reject" onsubmit="return confirm('Reject request from {p.email}?')" class="inline-form"><button type="submit" class="btn-remove">✕ Reject</button></form></div></div>'''
+
+    pending_section = f'''<div class="user-list" style="border-top:1px solid #f1f5f9;"><div class="section-label">Pending Sign-Up Requests ({len(pending)})</div>{pending_rows or '<div class="user-meta">No pending requests.</div>'}</div>'''
+
     panel = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>User Management</title><meta name="viewport" content="width=device-width,initial-scale=1">
 
-<style>*{{box-sizing:border-box;margin:0;padding:0;}}body{{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135deg,#0d152b,#1e3868);min-height:100vh;padding:28px 16px;}}.page-wrap{{max-width:780px;margin:0 auto;}}.page-header{{display:flex;align-items:center;gap:14px;margin-bottom:24px;}}.logo-mark{{font-family:'Arial Black',Arial,sans-serif;font-size:18px;font-weight:900;color:white;letter-spacing:2px;}}.logo-mark span{{font-weight:300;font-size:12px;color:#4db2de;}}.back-link{{margin-left:auto;color:#4db2de;text-decoration:none;font-size:13px;font-weight:600;border:1px solid rgba(77,178,222,.4);border-radius:20px;padding:5px 14px;}}.back-link:hover{{background:rgba(77,178,222,.15);}}.card{{background:white;border-radius:16px;overflow:hidden;box-shadow:0 12px 48px rgba(0,0,0,.25);}}.card-header{{background:linear-gradient(135deg,#0d152b,#1e3868);padding:24px 28px;display:flex;align-items:center;gap:16px;}}.card-header-icon{{width:46px;height:46px;border-radius:12px;background:rgba(3,141,189,.3);display:flex;align-items:center;justify-content:center;font-size:22px;}}.card-header-text h2{{color:white;font-size:20px;font-weight:800;margin-bottom:3px;}}.card-header-text p{{color:#4db2de;font-size:12px;}}.stat-chips{{margin-left:auto;}}.stat-chip{{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:4px 12px;font-size:11px;color:white;font-weight:600;}}.user-list{{padding:20px 28px;}}.section-label{{font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;}}.user-card{{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border-radius:10px;border:1px solid #f1f5f9;margin-bottom:8px;background:#fafafa;}}.user-card:hover{{border-color:#e2e8f0;background:white;box-shadow:0 2px 8px rgba(0,0,0,.06);}}.user-info{{display:flex;align-items:center;gap:12px;}}.user-avatar{{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:white;flex-shrink:0;}}.user-avatar.admin{{background:linear-gradient(135deg,#dc2626,#ef4444);}}.user-avatar.write{{background:linear-gradient(135deg,#059669,#10b981);}}.user-avatar.read{{background:linear-gradient(135deg,#0369a1,#0ea5e9);}}.user-email{{font-size:14px;font-weight:600;color:#0d152b;}}.user-meta{{font-size:11px;color:#94a3b8;margin-top:2px;}}.user-actions{{display:flex;align-items:center;gap:8px;flex-shrink:0;}}.role-badge{{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:800;}}.role-badge.admin{{background:#fee2e2;color:#dc2626;}}.role-badge.write{{background:#dcfce7;color:#16a34a;}}.role-badge.read{{background:#e0f2fe;color:#0369a1;}}.default-lock{{font-size:11px;color:#94a3b8;font-weight:600;}}.inline-form{{display:inline;}}.role-select{{border:1.5px solid #e2e8f0;border-radius:7px;padding:4px 8px;font-size:12px;color:#374151;cursor:pointer;outline:none;background:white;}}.btn-update{{background:#038dbd;color:white;border:none;border-radius:7px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;}}.btn-remove{{background:none;border:1.5px solid #fecaca;color:#ef4444;border-radius:7px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;}}.add-section{{padding:20px 28px 28px;border-top:1px solid #f1f5f9;}}.add-section h3{{font-size:14px;font-weight:700;color:#0d152b;margin-bottom:14px;}}.add-form{{display:flex;gap:10px;flex-wrap:wrap;}}.add-form input{{flex:1;min-width:200px;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 14px;font-size:13px;color:#374151;outline:none;}}.add-form select{{border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 14px;font-size:13px;color:#374151;outline:none;background:white;cursor:pointer;}}.add-form button{{background:linear-gradient(135deg,#0d152b,#1e3868);color:white;border:none;border-radius:10px;padding:10px 20px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;}}.add-form button:hover{{background:linear-gradient(135deg,#038dbd,#0284c7);}}</style></head><body>
+<style>*{{box-sizing:border-box;margin:0;padding:0;}}body{{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135deg,#0d152b,#1e3868);min-height:100vh;padding:28px 16px;}}.page-wrap{{max-width:780px;margin:0 auto;}}.page-header{{display:flex;align-items:center;gap:14px;margin-bottom:24px;}}.logo-mark{{font-family:'Arial Black',Arial,sans-serif;font-size:18px;font-weight:900;color:white;letter-spacing:2px;}}.logo-mark span{{font-weight:300;font-size:12px;color:#4db2de;}}.back-link{{margin-left:auto;color:#4db2de;text-decoration:none;font-size:13px;font-weight:600;border:1px solid rgba(77,178,222,.4);border-radius:20px;padding:5px 14px;}}.back-link:hover{{background:rgba(77,178,222,.15);}}.card{{background:white;border-radius:16px;overflow:hidden;box-shadow:0 12px 48px rgba(0,0,0,.25);}}.card-header{{background:linear-gradient(135deg,#0d152b,#1e3868);padding:24px 28px;display:flex;align-items:center;gap:16px;}}.card-header-icon{{width:46px;height:46px;border-radius:12px;background:rgba(3,141,189,.3);display:flex;align-items:center;justify-content:center;font-size:22px;}}.card-header-text h2{{color:white;font-size:20px;font-weight:800;margin-bottom:3px;}}.card-header-text p{{color:#4db2de;font-size:12px;}}.stat-chips{{margin-left:auto;}}.stat-chip{{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:4px 12px;font-size:11px;color:white;font-weight:600;}}.user-list{{padding:20px 28px;}}.section-label{{font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;}}.user-card{{display:flex;align-items:center;justify-content:space-between;gap:10px 16px;flex-wrap:wrap;padding:14px 16px;border-radius:10px;border:1px solid #f1f5f9;margin-bottom:8px;background:#fafafa;}}.user-card:hover{{border-color:#e2e8f0;background:white;box-shadow:0 2px 8px rgba(0,0,0,.06);}}.user-info{{display:flex;align-items:center;gap:12px;min-width:0;}}.user-avatar{{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:white;flex-shrink:0;}}.user-avatar.admin{{background:linear-gradient(135deg,#dc2626,#ef4444);}}.user-avatar.write{{background:linear-gradient(135deg,#059669,#10b981);}}.user-avatar.read{{background:linear-gradient(135deg,#0369a1,#0ea5e9);}}.user-email{{font-size:14px;font-weight:600;color:#0d152b;word-break:break-all;}}.user-meta{{font-size:11px;color:#94a3b8;margin-top:2px;}}.user-actions{{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;}}.role-badge{{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:800;}}.role-badge.admin{{background:#fee2e2;color:#dc2626;}}.role-badge.write{{background:#dcfce7;color:#16a34a;}}.role-badge.read{{background:#e0f2fe;color:#0369a1;}}.default-lock{{font-size:11px;color:#94a3b8;font-weight:600;}}.inline-form{{display:inline;}}.role-select{{border:1.5px solid #e2e8f0;border-radius:7px;padding:4px 8px;font-size:12px;color:#374151;cursor:pointer;outline:none;background:white;}}.btn-update{{background:#038dbd;color:white;border:none;border-radius:7px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;}}.btn-remove{{background:none;border:1.5px solid #fecaca;color:#ef4444;border-radius:7px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;}}.pw-form{{display:inline-flex;gap:6px;flex-wrap:nowrap;}}.pw-input{{border:1.5px solid #e2e8f0;border-radius:7px;padding:4px 8px;font-size:12px;color:#374151;outline:none;width:110px;}}.pw-input:focus{{border-color:#038dbd;}}.add-section{{padding:20px 28px 28px;border-top:1px solid #f1f5f9;}}.add-section h3{{font-size:14px;font-weight:700;color:#0d152b;margin-bottom:14px;}}.add-form{{display:flex;gap:10px;flex-wrap:wrap;}}.add-form input{{flex:1;min-width:200px;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 14px;font-size:13px;color:#374151;outline:none;}}.add-form select{{border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 14px;font-size:13px;color:#374151;outline:none;background:white;cursor:pointer;}}.add-form button{{background:linear-gradient(135deg,#0d152b,#1e3868);color:white;border:none;border-radius:10px;padding:10px 20px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;}}.add-form button:hover{{background:linear-gradient(135deg,#038dbd,#0284c7);}}</style></head><body>
 
 <div class="page-wrap"><div class="page-header"><div class="logo-mark">VARITEC<span>consulting</span></div><a class="back-link" href="/notes">← Back to Notes</a></div>
 
@@ -7274,13 +7813,69 @@ def admin_users():
 
 <div class="user-list"><div class="section-label">Default Administrators</div>{default_rows}{managed_label}{db_rows}</div>
 
-<div class="add-section"><h3>➕ Grant Access to New User</h3><form class="add-form" method="post" action="/admin/users/add"><input name="email" type="email" placeholder="user@company.com" required><select name="role"><option value="read">👁 Read Only</option><option value="write">✏️ Write</option><option value="admin">🛡️ Admin</option></select><button type="submit">+ Add User</button></form></div>
+{pending_section}
+
+<div class="add-section"><h3>➕ Grant Access to New User</h3><form class="add-form" method="post" action="/admin/users/add">
+<input name="email" type="email" placeholder="you@varitecconsulting.com" required autocomplete="username">
+<input name="password" type="password" placeholder="Create a password" required minlength="6" autocomplete="new-password">
+<input name="confirm_password" type="password" placeholder="Confirm password" required minlength="6" autocomplete="new-password">
+<select name="role"><option value="read">👁 Read Only</option><option value="write">✏️ Write</option><option value="admin">🛡️ Admin</option></select>
+<button type="submit">+ Add User</button>
+</form></div>
 
 </div></div></body></html>"""
 
     from flask import Response
 
     return Response(panel, mimetype="text/html")
+
+
+@app.route("/admin/signups/<int:sid>/approve", methods=["POST"])
+
+def admin_approve_signup(sid):
+
+    err = _require_admin()
+
+    if err: return err
+
+    req = PendingSignup.query.get(sid)
+
+    role = request.form.get("role", ROLE_READ)
+
+    if req and req.status == "pending" and role in ROLES:
+
+        if not UserAccess.query.filter_by(email=req.email).first():
+
+            ua = UserAccess(email=req.email, role=role)
+
+            ua.password = req.password_hash
+
+            db.session.add(ua)
+
+        req.status = "approved"
+
+        db.session.commit()
+
+    return redirect("/admin/users")
+
+
+@app.route("/admin/signups/<int:sid>/reject", methods=["POST"])
+
+def admin_reject_signup(sid):
+
+    err = _require_admin()
+
+    if err: return err
+
+    req = PendingSignup.query.get(sid)
+
+    if req and req.status == "pending":
+
+        req.status = "rejected"
+
+        db.session.commit()
+
+    return redirect("/admin/users")
 
 
 @app.route("/admin/users/add", methods=["POST"])
@@ -7295,15 +7890,60 @@ def admin_add_user():
 
     role  = request.form.get("role", ROLE_READ)
 
-    if email and role in ROLES:
+    password = request.form.get("password","")
+
+    confirm_password = request.form.get("confirm_password","")
+
+    if email and role in ROLES and password and password == confirm_password and len(password) >= 6:
 
         existing = UserAccess.query.filter_by(email=email).first()
 
-        if existing: existing.role = role
+        if existing:
 
-        else: db.session.add(UserAccess(email=email, role=role))
+            existing.role = role
+
+            existing.set_password(password)
+
+        else:
+
+            ua = UserAccess(email=email, role=role)
+
+            ua.set_password(password)
+
+            db.session.add(ua)
 
         db.session.commit()
+
+    return redirect("/admin/users")
+
+
+@app.route("/admin/users/set-password", methods=["POST"])
+
+def admin_set_password():
+
+    err = _require_admin()
+
+    if err: return err
+
+    email = request.form.get("email","").strip().lower()
+
+    password = request.form.get("password","")
+
+    if email and password and len(password) >= 6:
+
+        ua = UserAccess.query.filter_by(email=email).first()
+
+        if ua is None and email in DEFAULT_ADMINS:
+
+            ua = UserAccess(email=email, role=UserAccess.get_role(email))
+
+            db.session.add(ua)
+
+        if ua is not None:
+
+            ua.set_password(password)
+
+            db.session.commit()
 
     return redirect("/admin/users")
 
@@ -8893,4 +9533,3 @@ def clone_section(section_id):
 if __name__ == "__main__":
 
     app.run(debug=True, host="0.0.0.0", port=5000)
-
