@@ -4142,6 +4142,8 @@ html body .si-card[data-sis="hold"] .si-card-head {
 <style>
 /* SI: bold dates + status */
 .date-val{font-weight:800!important;color:#0f172a!important;}
+/* DATE_PASTE_OVERFLOW_FIX_V1 */
+.date-val{max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;}
 .si-status-label{font-size:11px!important;font-weight:800!important;color:#0f172a!important;letter-spacing:.5px!important;}
 .ob-status-btn{font-weight:800!important;font-size:13px!important;padding:5px 16px!important;}
 </style>
@@ -6614,7 +6616,15 @@ function rabDelete(){
 
       var prevRow = groupRows[0].previousElementSibling;
 
+      var prevProgress = (prevRow && prevRow.getAttribute('data-repeat-hdr')) ? prevRow.previousElementSibling : null;
+
+      /* OB_DELETE_PROGRESS_ROW_FIX_V1 */
+
       if(prevRow && prevRow.getAttribute('data-repeat-hdr')) _rabTbody.removeChild(prevRow);
+
+      /* OB_PROGRESS_ROW_KEEP_ONE_V1: only remove if a spare progress row remains elsewhere */
+
+      if(prevProgress && prevProgress.classList && prevProgress.classList.contains('ob-progress-row') && _rabTbody.querySelectorAll('tr.ob-progress-row').length > 1) _rabTbody.removeChild(prevProgress);
 
       groupRows.forEach(function(r){ _rabTbody.removeChild(r); });
 
@@ -6744,7 +6754,15 @@ function rabDeleteCustomer(){
 
   var prevRow = groupRows[0].previousElementSibling;
 
+  var prevProgress = (prevRow && prevRow.getAttribute('data-repeat-hdr')) ? prevRow.previousElementSibling : null;
+
+  /* OB_DELETE_PROGRESS_ROW_FIX_V1 */
+
   if(prevRow && prevRow.getAttribute('data-repeat-hdr')) _rabTbody.removeChild(prevRow);
+
+  /* OB_PROGRESS_ROW_KEEP_ONE_V1: only remove if a spare progress row remains elsewhere */
+
+  if(prevProgress && prevProgress.classList && prevProgress.classList.contains('ob-progress-row') && _rabTbody.querySelectorAll('tr.ob-progress-row').length > 1) _rabTbody.removeChild(prevProgress);
 
   groupRows.forEach(function(r){ _rabTbody.removeChild(r); });
 
@@ -6815,6 +6833,79 @@ function openDatePicker(e, btn){
   dp.style.top  = Math.max(4,top)  + 'px';
 
 }
+
+/* DATE_PASTE_OVERFLOW_FIX_V1 */
+(function(){
+  function dateValPasteHandler(e){
+    var target = e.target && e.target.closest ? e.target.closest('.date-val') : null;
+    if(!target) return;
+    e.preventDefault();
+    var text = ((e.clipboardData || window.clipboardData || {}).getData
+      ? (e.clipboardData || window.clipboardData).getData('text/plain') : '') || '';
+    text = text.replace(/\s+/g,' ').trim();
+    document.execCommand('insertText', false, text);
+    if (typeof scheduleSave === 'function') scheduleSave();
+  }
+  document.addEventListener('paste', dateValPasteHandler, true);
+})();
+/* DATE_VAL_NESTED_FOCUS_FIX_V1 */
+/* DATE_VAL_DIRECT_PASTE_V1 */
+(function(){
+  var _lastDateVal = null;
+  document.addEventListener('mousedown', function(e){
+    var dv = e.target && e.target.closest ? e.target.closest('.date-val') : null;
+    _lastDateVal = dv || null;
+  }, true);
+  document.addEventListener('focusin', function(e){
+    var dv = e.target && e.target.closest ? e.target.closest('.date-val') : null;
+    if(dv) _lastDateVal = dv;
+  }, true);
+  document.addEventListener('paste', function(e){
+    if(e.defaultPrevented) return;
+    if(!_lastDateVal) return;
+    var dv = _lastDateVal;
+    e.preventDefault();
+    var cd = e.clipboardData || window.clipboardData;
+    var text = (cd && cd.getData ? cd.getData('text/plain') : '') || '';
+    text = text.replace(/\s+/g,' ').trim();
+    dv.textContent = text;
+    dv.focus();
+    try{
+      var range=document.createRange();
+      range.selectNodeContents(dv);
+      range.collapse(false);
+      var sel=window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }catch(err){}
+    dv.dispatchEvent(new Event('input',{bubbles:true}));
+    if (typeof scheduleSave === 'function') scheduleSave();
+  }, true);
+})();
+
+(function(){
+  function forceDateValCaret(dv){
+    dv.focus();
+    try{
+      var range=document.createRange();
+      range.selectNodeContents(dv);
+      range.collapse(false);
+      var sel=window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }catch(err){}
+  }
+  document.addEventListener('mousedown', function(e){
+    var dv = e.target && e.target.closest ? e.target.closest('.date-val') : null;
+    if(!dv) return;
+    setTimeout(function(){ forceDateValCaret(dv); }, 0);
+  }, true);
+  document.addEventListener('focusin', function(e){
+    var dv = e.target && e.target.closest ? e.target.closest('.date-val') : null;
+    if(!dv) return;
+    setTimeout(function(){ forceDateValCaret(dv); }, 0);
+  }, true);
+})();
 
 
 function _dpRender(){
