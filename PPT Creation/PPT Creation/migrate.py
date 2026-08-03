@@ -6878,7 +6878,7 @@ function _dpRenderDays(){
 
   }
 
-  h+='</div><div class="dp-footer"><button class="dp-today-btn">Today</button></div>';
+  h+='</div><div class="dp-footer"><button class="dp-today-btn">Today</button><button class="dp-clear-btn">Clear</button></div>';
 
   dp.innerHTML=h;
 
@@ -6909,6 +6909,10 @@ function _dpRenderDays(){
   var tb=dp.querySelector('.dp-today-btn');
 
   if(tb) tb.addEventListener('click',function(e){e.stopPropagation();dpSelectToday();});
+
+  var cb=dp.querySelector('.dp-clear-btn');
+
+  if(cb) cb.addEventListener('click',function(e){e.stopPropagation();dpClearDate();});
 
 }
 
@@ -7088,6 +7092,19 @@ function dpSelectToday(){
   _dpMonth=t.getMonth(); _dpYear=t.getFullYear();
 
   dpSelect(t.getDate());
+
+}
+
+/* DATEPICKER_CLEAR_V1 */
+function dpClearDate(){
+
+  if(!_dpTarget) return;
+
+  _dpTarget.textContent='';
+
+  _dpTarget.dispatchEvent(new Event('input',{bubbles:true}));
+
+  dpClose(); scheduleSave();
 
 }
 
