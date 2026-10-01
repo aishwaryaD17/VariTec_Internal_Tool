@@ -10480,7 +10480,7 @@ def export_pdf_section(section):
             for _si_chunk in _si_paginate_for_pdf(content, cards_per_page=1):
                 # No pdf-note-body — break-inside:avoid on it causes blank pages (same fix as rr/pi/fa) [SI_PDF_NO_NOTE_BODY_V1]
                 pages_html += '<div class="pdf-note">' + _spacer_div + _si_chunk + '</div>'
-        elif any(x in content for x in ['rr-wrap','pi-wrap','fa-wrap']):
+        elif any(x in content for x in ['rr-wrap','pi-wrap','fa-wrap','sc-table']):  # SC_TABLE_PDF_NO_NOTE_BODY_V1
             # No pdf-note-body — break-inside:avoid on it causes blank pages for these templates
             pages_html += f'<div class="pdf-note">{title_html}{_spacer_div}{content}</div>'
         else:
